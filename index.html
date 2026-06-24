@@ -22,9 +22,11 @@ var TYPE = {colors:["#e63946","#1d7874","#f4a261","#7C4DBC"], names:["ECA Owned"
 function growthColor(g){if(g===null)return"#9C9A93";if(g<0)return"#E24B4A";if(g<2.5)return"#EF9F27";if(g<6)return"#97C459";return"#1D7A52";}
 var GB={colors:["#E24B4A","#EF9F27","#97C459","#1D7A52","#9C9A93"],
         names:["Contracting <0%","Flat 0-2.5%","Moderate 2.5-6%","Strong >=6%","Unknown"]};
+var SB={colors:["#C6DBEF","#6BAED6","#2171B5","#08306B"],names:["0-50","50-150","150-300","300+"]};
+function sizeBucket(u){return u<50?0:u<150?1:u<300?2:3;}
 var map=L.map("map").setView([33,-88],5);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(map);
-var mode="growth", markers=[], bounds=[], typeOn=[true,true,true,true];
+var mode="growth", markers=[], bounds=[], typeOn=[true,true,true,true], sizeOn=[true,true,true,true];
 DEALS.forEach(function(d){
   var lat=d[5],lon=d[6],units=d[3];
   var m=L.circleMarker([lat,lon],{radius:Math.max(5,Math.sqrt(units)*0.9),color:"#0008",weight:1,fillOpacity:.82});
@@ -36,20 +38,22 @@ DEALS.forEach(function(d){
   m._d=d; markers.push(m); m.addTo(map); bounds.push([lat,lon]);
 });
 map.fitBounds(bounds,{padding:[30,30]});
-function visible(d){return mode==="type"?typeOn[d[4]]:true;}
+function visible(d){return mode==="type"?typeOn[d[4]]:mode==="size"?sizeOn[sizeBucket(d[3])]:true;}
 function paint(){markers.forEach(function(m){var d=m._d;
   if(!visible(d)){map.removeLayer(m);return;} if(!map.hasLayer(m))m.addTo(map);
-  m.setStyle({fillColor: mode==="growth"?growthColor(d[7]):TYPE.colors[d[4]]});});}
+  m.setStyle({fillColor: mode==="growth"?growthColor(d[7]):mode==="size"?SB.colors[sizeBucket(d[3])]:TYPE.colors[d[4]]});});}
 paint();
 var ctl=L.control({position:"topright"});
 ctl.onAdd=function(){
   var div=L.DomUtil.create("div","panel"); L.DomEvent.disableClickPropagation(div);
   var tot=DEALS.length, units=DEALS.reduce(function(a,d){return a+d[3];},0);
   div.innerHTML='<h4>ECA Portfolio</h4><div style="color:#777;font-size:12px">'+tot+' deals &middot; '+units.toLocaleString()+' units</div>'+
-    '<div class="seg"><button id="bG" class="on">Color: growth</button><button id="bT">Color: type</button></div><div id="leg"></div>';
+    '<div class="seg"><button id="bG" class="on">Growth</button><button id="bT">Type</button><button id="bS">Size</button></div><div id="leg"></div>';
   setTimeout(function(){
-    document.getElementById("bG").onclick=function(){mode="growth";this.classList.add("on");document.getElementById("bT").classList.remove("on");paint();legend();};
-    document.getElementById("bT").onclick=function(){mode="type";this.classList.add("on");document.getElementById("bG").classList.remove("on");paint();legend();};
+    function setMode(m,bid){mode=m;["bG","bT","bS"].forEach(function(id){document.getElementById(id).classList.toggle("on",id===bid);});paint();legend();}
+    document.getElementById("bG").onclick=function(){setMode("growth","bG");};
+    document.getElementById("bT").onclick=function(){setMode("type","bT");};
+    document.getElementById("bS").onclick=function(){setMode("size","bS");};
     legend();
   },0);
   return div;
@@ -57,21 +61,28 @@ ctl.onAdd=function(){
 ctl.addTo(map);
 function legend(){
   var leg=document.getElementById("leg"); if(!leg)return;
-  var html="", cnt={}, un={};
-  DEALS.forEach(function(d){cnt[d[4]]=(cnt[d[4]]||0)+1;un[d[4]]=(un[d[4]]||0)+d[3];});
+  var html="", cnt={}, un={}, scnt={}, sun={};
+  DEALS.forEach(function(d){cnt[d[4]]=(cnt[d[4]]||0)+1;un[d[4]]=(un[d[4]]||0)+d[3];
+    var b=sizeBucket(d[3]);scnt[b]=(scnt[b]||0)+1;sun[b]=(sun[b]||0)+d[3];});
   if(mode==="growth"){
     GB.names.forEach(function(n,i){
       if(i===4 && !DEALS.some(function(d){return d[7]===null;})) return;
       html+='<div class="row"><span class="dot" style="background:'+GB.colors[i]+'"></span>'+n+'</div>';
+    });
+  }else if(mode==="size"){
+    SB.names.forEach(function(n,i){
+      html+='<div class="row'+(sizeOn[i]?'':' off')+'" data-s="'+i+'"><span class="dot" style="background:'+SB.colors[i]+'"></span>'+n+' units &mdash; '+(scnt[i]||0)+' / '+(sun[i]||0).toLocaleString()+'u</div>';
     });
   }else{
     TYPE.names.forEach(function(n,i){
       html+='<div class="row'+(typeOn[i]?'':' off')+'" data-g="'+i+'"><span class="dot" style="background:'+TYPE.colors[i]+'"></span>'+n+' &mdash; '+(cnt[i]||0)+' / '+(un[i]||0).toLocaleString()+'u</div>';
     });
   }
-  html+='<div style="margin-top:6px;color:#999;font-size:11px">size = unit count<br>growth = Census 2020&rarr;2025 metro</div>';
+  html+='<div style="margin-top:6px;color:#999;font-size:11px">marker size = unit count<br>growth = Census 2020&rarr;2025 metro</div>';
   leg.innerHTML=html;
-  if(mode==="type") leg.querySelectorAll(".row").forEach(function(r){r.onclick=function(){
-    var g=+r.getAttribute("data-g"); typeOn[g]=!typeOn[g]; r.classList.toggle("off"); paint();};});
+  if(mode==="type"||mode==="size") leg.querySelectorAll(".row").forEach(function(r){r.onclick=function(){
+    if(mode==="size"){var s=+r.getAttribute("data-s"); sizeOn[s]=!sizeOn[s];}
+    else{var g=+r.getAttribute("data-g"); typeOn[g]=!typeOn[g];}
+    r.classList.toggle("off"); paint();};});
 }
 </script></body></html>
